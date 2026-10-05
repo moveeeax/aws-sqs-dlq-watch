@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Test
+        run: pytest
+
+      - name: CLI smoke test
+        run: |
+          aws-sqs-dlq-watch --help
+          python -c "import sqs_dlq_watch, boto3; print(sqs_dlq_watch.__version__)"
+
+      - name: Offline example must report findings and exit 1
+        run: |
+          set +e
+          python examples/demo.py
+          code=$?
+          set -e
+          test "$code" -eq 1

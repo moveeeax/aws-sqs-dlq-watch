@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aws-sqs-dlq-watch"
+version = "0.1.0"
+description = "Audit SQS dead-letter queues: backlogged DLQs, stale messages, orphan DLQs and source queues with no redrive policy."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Michael Tarassov", email = "michael@tarassov.me" }]
+keywords = ["aws", "sqs", "dlq", "sre", "cli", "audit"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: System Administrators",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: System :: Monitoring",
+]
+dependencies = ["boto3>=1.28"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[project.urls]
+Homepage = "https://github.com/moveeeax/aws-sqs-dlq-watch"
+Issues = "https://github.com/moveeeax/aws-sqs-dlq-watch/issues"
+
+[project.scripts]
+aws-sqs-dlq-watch = "sqs_dlq_watch.cli:main"
+
+[tool.setuptools]
+packages = ["sqs_dlq_watch"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

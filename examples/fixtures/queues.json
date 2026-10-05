@@ -1,0 +1,48 @@
+{
+  "region": "eu-central-1",
+  "account": "123456789012",
+  "queues": [
+    {
+      "name": "orders",
+      "messages": 14,
+      "in_flight": 2,
+      "redrive": { "target": "orders-dlq", "maxReceiveCount": 5 }
+    },
+    {
+      "name": "orders-dlq",
+      "messages": 418,
+      "retention_seconds": 345600,
+      "oldest_age_seconds": 309000
+    },
+    {
+      "name": "invoices",
+      "messages": 3,
+      "redrive": { "target": "shared-dlq", "maxReceiveCount": 3 }
+    },
+    {
+      "name": "receipts",
+      "messages": 0,
+      "redrive": { "target": "shared-dlq", "maxReceiveCount": 3 }
+    },
+    {
+      "name": "shared-dlq",
+      "messages": 2,
+      "oldest_age_seconds": 5400
+    },
+    {
+      "name": "webhooks",
+      "messages": 91,
+      "in_flight": 7
+    },
+    {
+      "name": "legacy-import-dlq",
+      "messages": 37,
+      "oldest_age_seconds": 900000
+    },
+    {
+      "name": "payments",
+      "messages": 5,
+      "redrive": { "target_arn": "arn:aws:sqs:eu-central-1:123456789012:payments-dlq-old", "maxReceiveCount": 5 }
+    }
+  ]
+}
