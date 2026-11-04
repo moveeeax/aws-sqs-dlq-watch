@@ -1,7 +1,7 @@
 # aws-sqs-dlq-watch
 
 [![ci](https://github.com/moveeeax/aws-sqs-dlq-watch/actions/workflows/ci.yml/badge.svg)](https://github.com/moveeeax/aws-sqs-dlq-watch/actions/workflows/ci.yml)
-[![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
+[![python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Audit the dead-letter queues in an AWS account: which ones are filling up, which hold
@@ -147,6 +147,7 @@ oldest age. Use it when CloudWatch is not available; prefer the metric otherwise
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 pytest
+ruff check .
 ```
 
 The test suite runs entirely offline against the stub clients in `sqs_dlq_watch/testing.py`
