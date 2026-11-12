@@ -6,7 +6,7 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
-from .model import Queue, matches_any, parse_redrive_policy
+from .model import Queue, matches_any, parse_redrive_allow_policy, parse_redrive_policy
 
 AGE_SOURCES = ("cloudwatch", "peek", "none")
 
@@ -65,6 +65,7 @@ def describe_queue(sqs, url: str) -> Queue:
     )
     name = url.rstrip("/").rsplit("/", 1)[-1]
     target, max_receive = parse_redrive_policy(attrs.get("RedrivePolicy"))
+    allow_permission, allow_sources = parse_redrive_allow_policy(attrs.get("RedriveAllowPolicy"))
     return Queue(
         url=url,
         name=name,
@@ -75,6 +76,8 @@ def describe_queue(sqs, url: str) -> Queue:
         is_fifo=str(attrs.get("FifoQueue", "false")).lower() == "true",
         redrive_target_arn=target,
         max_receive_count=max_receive,
+        redrive_allow_permission=allow_permission,
+        redrive_allow_source_arns=allow_sources,
     )
 
 

@@ -12,7 +12,23 @@
       "name": "orders-dlq",
       "messages": 418,
       "retention_seconds": 345600,
-      "oldest_age_seconds": 309000
+      "oldest_age_seconds": 309000,
+      "move_tasks": [
+        {
+          "Status": "FAILED",
+          "ApproximateNumberOfMessagesMoved": 120,
+          "ApproximateNumberOfMessagesToMove": 538,
+          "MaxNumberOfMessagesPerSecond": 50,
+          "StartedTimestamp": 1791025200000,
+          "FailureReason": "AccessDenied: kms:Decrypt on the orders queue key"
+        },
+        {
+          "Status": "COMPLETED",
+          "ApproximateNumberOfMessagesMoved": 61,
+          "ApproximateNumberOfMessagesToMove": 61,
+          "StartedTimestamp": 1790420400000
+        }
+      ]
     },
     {
       "name": "invoices",
@@ -22,11 +38,13 @@
     {
       "name": "receipts",
       "messages": 0,
-      "redrive": { "target": "shared-dlq", "maxReceiveCount": 3 }
+      "redrive": { "target": "shared-dlq", "maxReceiveCount": 1 }
     },
     {
       "name": "shared-dlq",
       "messages": 2,
+      "retention_seconds": 1209600,
+      "redrive_allow": { "permission": "byQueue", "sources": ["invoices"] },
       "oldest_age_seconds": 5400
     },
     {

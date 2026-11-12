@@ -36,6 +36,9 @@ def test_collect_reads_attributes_and_redrive_policies(clients):
     assert queues["orders"].messages_in_flight == 2
     assert queues["orders-dlq"].retention_seconds == 345600
     assert queues["webhooks"].redrive_target_arn is None
+    assert queues["shared-dlq"].redrive_allow_permission == "byQueue"
+    assert queues["shared-dlq"].redrive_allow_source_arns == [sqs.arn("invoices")]
+    assert queues["orders-dlq"].redrive_allow_permission is None
 
 
 def test_ignore_globs_skip_queues_before_they_are_described(clients):

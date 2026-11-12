@@ -14,6 +14,7 @@ def topo():
             Queue(url="u/orders", name="orders", arn="arn:orders", messages=4,
                   redrive_target_arn="arn:orders-dlq"),
             Queue(url="u/orders-dlq", name="orders-dlq", arn="arn:orders-dlq", messages=9,
+                  retention_seconds=1209600,
                   oldest_message_age_seconds=200000),
         ]
     )

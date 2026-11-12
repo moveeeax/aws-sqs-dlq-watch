@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import Dict, List, Tuple
 
 from .model import Finding, Queue, Topology
 
@@ -15,6 +15,8 @@ class Thresholds:
     # A DLQ message older than this share of the retention window is about to be
     # deleted by SQS itself, which is the point of no return.
     retention_warn_ratio: float = 0.8
+    # A maxReceiveCount below this sends messages to the DLQ on transient failures.
+    min_receive_count: int = 3
 
 
 def _hours(seconds: int) -> float:
@@ -67,6 +69,106 @@ def _stale(queue: Queue, limit_hours: float, warn_ratio: float) -> Finding:
     )
 
 
+def _redrive_pairs(topo: Topology) -> List[Tuple[Queue, Queue]]:
+    """(source, dlq) for every redrive policy whose target exists in this region."""
+    by_arn = topo.by_arn()
+    pairs = []
+    for queue in topo.queues:
+        dlq = by_arn.get(queue.redrive_target_arn) if queue.redrive_target_arn else None
+        if dlq is not None:
+            pairs.append((queue, dlq))
+    return pairs
+
+
+def _policy_findings(topo: Topology, thresholds: Thresholds) -> List[Finding]:
+    """Checks on the redrive configuration itself, independent of what the queues hold."""
+    findings: List[Finding] = []
+    # DLQ name -> (dlq, sources) for the rules whose fix lives on the DLQ.
+    short_retention: Dict[str, Tuple[Queue, List[Queue]]] = {}
+    blocked: Dict[str, Tuple[Queue, List[Queue]]] = {}
+
+    for source, dlq in _redrive_pairs(topo):
+        count = source.max_receive_count
+        if count is not None and count < thresholds.min_receive_count:
+            findings.append(
+                Finding(
+                    rule="redrive_low_max_receive",
+                    severity="medium",
+                    queue=source.name,
+                    detail="maxReceiveCount is %d (minimum %d): %d failed receive(s) move a message to %s, so transient errors land in the DLQ"
+                    % (count, thresholds.min_receive_count, count, dlq.name),
+                    data={
+                        "max_receive_count": count,
+                        "min_receive_count": thresholds.min_receive_count,
+                        "dead_letter_queue": dlq.name,
+                    },
+                )
+            )
+
+        if source.is_fifo != dlq.is_fifo:
+            findings.append(
+                Finding(
+                    rule="dlq_type_mismatch",
+                    severity="high",
+                    queue=source.name,
+                    detail="%s queue redrives into %s queue %s; SQS requires both to be the same type"
+                    % (_kind(source), _kind(dlq), dlq.name),
+                    data={
+                        "fifo": source.is_fifo,
+                        "dead_letter_queue": dlq.name,
+                        "dead_letter_queue_fifo": dlq.is_fifo,
+                    },
+                )
+            )
+        elif not dlq.is_fifo and dlq.retention_seconds <= source.retention_seconds:
+            # Standard queues keep the original enqueue timestamp when a message is
+            # dead-lettered, so time spent in the source counts against the DLQ's
+            # retention. FIFO queues reset it, so the rule does not apply there.
+            short_retention.setdefault(dlq.name, (dlq, []))[1].append(source)
+
+        if not dlq.allows_source(source.arn):
+            blocked.setdefault(dlq.name, (dlq, []))[1].append(source)
+
+    for dlq, sources in short_retention.values():
+        findings.append(
+            Finding(
+                rule="dlq_retention_shorter",
+                severity="medium",
+                queue=dlq.name,
+                detail="retention %s is not longer than source(s) %s; messages keep their original enqueue time and expire here early"
+                % (
+                    _age_text(dlq.retention_seconds),
+                    ", ".join("%s (%s)" % (s.name, _age_text(s.retention_seconds)) for s in sources),
+                ),
+                data={
+                    "retention_seconds": dlq.retention_seconds,
+                    "sources": {s.name: s.retention_seconds for s in sources},
+                },
+            )
+        )
+
+    for dlq, sources in blocked.values():
+        findings.append(
+            Finding(
+                rule="redrive_allow_blocks",
+                severity="high",
+                queue=dlq.name,
+                detail="RedriveAllowPolicy (%s) does not allow source(s) %s that point at this queue"
+                % (dlq.redrive_allow_permission, ", ".join(s.name for s in sources)),
+                data={
+                    "redrive_permission": dlq.redrive_allow_permission,
+                    "allowed_source_arns": list(dlq.redrive_allow_source_arns),
+                    "blocked_sources": [s.name for s in sources],
+                },
+            )
+        )
+    return findings
+
+
+def _kind(queue: Queue) -> str:
+    return "FIFO" if queue.is_fifo else "standard"
+
+
 def analyze(topo: Topology, thresholds: Thresholds) -> List[Finding]:
     """Produce every finding for a resolved topology, worst first."""
     findings: List[Finding] = []
@@ -117,6 +219,8 @@ def analyze(topo: Topology, thresholds: Thresholds) -> List[Finding]:
                 data={"target_arn": target},
             )
         )
+
+    findings.extend(_policy_findings(topo, thresholds))
 
     findings.sort(key=lambda f: (SEVERITY_RANK.get(f.severity, 9), f.rule, f.queue))
     return findings
