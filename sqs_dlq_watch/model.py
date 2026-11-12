@@ -27,7 +27,19 @@ class Queue:
     is_fifo: bool = False
     redrive_target_arn: Optional[str] = None
     max_receive_count: Optional[int] = None
+    # RedriveAllowPolicy of this queue in its role as a DLQ. None means the attribute
+    # is absent or unreadable, which SQS treats as allowAll.
+    redrive_allow_permission: Optional[str] = None
+    redrive_allow_source_arns: List[str] = field(default_factory=list)
     oldest_message_age_seconds: Optional[int] = None
+
+    def allows_source(self, source_arn: str) -> bool:
+        """Whether this queue's RedriveAllowPolicy lets ``source_arn`` use it as a DLQ."""
+        if self.redrive_allow_permission == "denyAll":
+            return False
+        if self.redrive_allow_permission == "byQueue":
+            return source_arn in self.redrive_allow_source_arns
+        return True
 
     @property
     def looks_like_dlq(self) -> bool:
@@ -45,6 +57,8 @@ class Queue:
             "fifo": self.is_fifo,
             "redrive_target_arn": self.redrive_target_arn,
             "max_receive_count": self.max_receive_count,
+            "redrive_allow_permission": self.redrive_allow_permission,
+            "redrive_allow_source_arns": list(self.redrive_allow_source_arns),
             "oldest_message_age_seconds": self.oldest_message_age_seconds,
         }
 
@@ -119,6 +133,29 @@ def parse_redrive_policy(raw: Optional[str]) -> Tuple[Optional[str], Optional[in
     except (TypeError, ValueError):
         count = None
     return target, count
+
+
+def parse_redrive_allow_policy(raw: Optional[str]) -> Tuple[Optional[str], List[str]]:
+    """Pull (redrivePermission, sourceQueueArns) out of the RedriveAllowPolicy blob.
+
+    Like the redrive policy, bad JSON degrades to (None, []), which callers read as
+    the SQS default of allowAll rather than inventing a denial.
+    """
+    if not raw:
+        return None, []
+    try:
+        policy = json.loads(raw)
+    except (ValueError, TypeError):
+        return None, []
+    if not isinstance(policy, dict):
+        return None, []
+    permission = policy.get("redrivePermission")
+    if permission not in ("allowAll", "denyAll", "byQueue"):
+        permission = None
+    arns = policy.get("sourceQueueArns") or []
+    if not isinstance(arns, list):
+        arns = []
+    return permission, [str(a) for a in arns]
 
 
 def build_topology(queues: Iterable[Queue]) -> Topology:

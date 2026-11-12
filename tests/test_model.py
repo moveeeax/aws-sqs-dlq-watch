@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import json
 
-from sqs_dlq_watch.model import Queue, build_topology, matches_any, parse_redrive_policy
+from sqs_dlq_watch.model import (
+    Queue,
+    build_topology,
+    matches_any,
+    parse_redrive_allow_policy,
+    parse_redrive_policy,
+)
 
 
 def q(name, **kw):
@@ -63,3 +69,30 @@ def test_a_dlq_that_also_has_its_own_redrive_is_still_a_dlq():
 def test_matches_any_globs_on_the_queue_name():
     assert matches_any("tf-state-lock", ["tf-*"])
     assert not matches_any("orders", ["tf-*", "*-test"])
+
+
+def test_parse_redrive_allow_policy_reads_permission_and_sources():
+    raw = json.dumps({"redrivePermission": "byQueue", "sourceQueueArns": ["arn:a", "arn:b"]})
+    assert parse_redrive_allow_policy(raw) == ("byQueue", ["arn:a", "arn:b"])
+    assert parse_redrive_allow_policy(json.dumps({"redrivePermission": "denyAll"})) == (
+        "denyAll",
+        [],
+    )
+
+
+def test_parse_redrive_allow_policy_survives_garbage():
+    assert parse_redrive_allow_policy(None) == (None, [])
+    assert parse_redrive_allow_policy("{oops") == (None, [])
+    assert parse_redrive_allow_policy(json.dumps({"redrivePermission": "maybe"})) == (None, [])
+    assert parse_redrive_allow_policy(
+        json.dumps({"redrivePermission": "byQueue", "sourceQueueArns": "arn:a"})
+    ) == ("byQueue", [])
+
+
+def test_allows_source_follows_the_redrive_allow_policy():
+    assert q("d").allows_source("arn:x")  # absent policy = allowAll
+    assert q("d", redrive_allow_permission="allowAll").allows_source("arn:x")
+    assert not q("d", redrive_allow_permission="denyAll").allows_source("arn:x")
+    by_queue = q("d", redrive_allow_permission="byQueue", redrive_allow_source_arns=["arn:x"])
+    assert by_queue.allows_source("arn:x")
+    assert not by_queue.allows_source("arn:y")

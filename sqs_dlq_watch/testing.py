@@ -15,7 +15,8 @@ FIXED_NOW = _dt.datetime(2026, 10, 5, 12, 0, 0, tzinfo=_dt.timezone.utc)
 
 
 class FakeSQS:
-    """A tiny SQS stub: ListQueues (paginated), GetQueueAttributes, ReceiveMessage."""
+    """A tiny SQS stub: ListQueues (paginated), GetQueueAttributes, ReceiveMessage,
+    GetQueueUrl, ListDeadLetterSourceQueues and the message move task calls."""
 
     def __init__(
         self,
@@ -31,8 +32,16 @@ class FakeSQS:
         self.fail_on = fail_on
         self.calls: List[str] = []
         self.queues: Dict[str, Dict[str, Any]] = {}
+        # StartMessageMoveTask requests, in order, so tests can assert on them.
+        self.started: List[Dict[str, Any]] = []
+        # queue name -> move tasks, newest first, in the ListMessageMoveTasks shape
+        self.move_tasks: Dict[str, List[Dict[str, Any]]] = {}
         for raw in spec.get("queues", []):
             self.queues[raw["name"]] = raw
+            if raw.get("move_tasks"):
+                self.move_tasks[raw["name"]] = [
+                    dict(t, SourceArn=self.arn(raw["name"])) for t in raw["move_tasks"]
+                ]
 
     # -- helpers ---------------------------------------------------------
     def url(self, name: str) -> str:
@@ -84,9 +93,67 @@ class FakeSQS:
                     "maxReceiveCount": redrive.get("maxReceiveCount", 5),
                 }
             )
+        allow = raw.get("redrive_allow")
+        if allow:
+            policy: Dict[str, Any] = {"redrivePermission": allow["permission"]}
+            if allow.get("sources") is not None:
+                policy["sourceQueueArns"] = [self.arn(n) for n in allow["sources"]]
+            attrs["RedriveAllowPolicy"] = json.dumps(policy)
         if raw.get("broken_redrive"):
             attrs["RedrivePolicy"] = raw["broken_redrive"]
         return {"Attributes": attrs}
+
+    def get_queue_url(self, **kwargs: Any) -> Dict[str, Any]:
+        self._boom("GetQueueUrl")
+        name = kwargs["QueueName"]
+        owner = kwargs.get("QueueOwnerAWSAccountId")
+        if name not in self.queues or (owner and owner != self.account):
+            raise RuntimeError(
+                "AWS.SimpleQueueService.NonExistentQueue: The specified queue does not exist."
+            )
+        return {"QueueUrl": self.url(name)}
+
+    def list_dead_letter_source_queues(self, **kwargs: Any) -> Dict[str, Any]:
+        self._boom("ListDeadLetterSourceQueues")
+        target = self._name_from_url(kwargs["QueueUrl"])
+        names = sorted(
+            n for n, raw in self.queues.items() if (raw.get("redrive") or {}).get("target") == target
+        )
+        start = int(kwargs.get("NextToken") or 0)
+        page = names[start : start + self.page_size]
+        out: Dict[str, Any] = {"queueUrls": [self.url(n) for n in page]}
+        if start + self.page_size < len(names):
+            out["NextToken"] = str(start + self.page_size)
+        return out
+
+    def list_message_move_tasks(self, **kwargs: Any) -> Dict[str, Any]:
+        self._boom("ListMessageMoveTasks")
+        name = kwargs["SourceArn"].rsplit(":", 1)[-1]
+        # Like SQS, return only the latest task unless MaxResults asks for more.
+        limit = int(kwargs.get("MaxResults") or 1)
+        return {"Results": [dict(t) for t in self.move_tasks.get(name, [])[:limit]]}
+
+    def start_message_move_task(self, **kwargs: Any) -> Dict[str, Any]:
+        self._boom("StartMessageMoveTask")
+        name = kwargs["SourceArn"].rsplit(":", 1)[-1]
+        tasks = self.move_tasks.setdefault(name, [])
+        if any(t.get("Status") == "RUNNING" for t in tasks):
+            raise RuntimeError("UnsupportedOperation: a message move task is already running")
+        self.started.append(dict(kwargs))
+        handle = "task-%s-%d" % (name, len(self.started))
+        task: Dict[str, Any] = {
+            "TaskHandle": handle,
+            "Status": "RUNNING",
+            "SourceArn": kwargs["SourceArn"],
+            "ApproximateNumberOfMessagesMoved": 0,
+            "ApproximateNumberOfMessagesToMove": int(self.queues[name].get("messages", 0)),
+            "StartedTimestamp": int(self.now.timestamp() * 1000),
+        }
+        for key in ("DestinationArn", "MaxNumberOfMessagesPerSecond"):
+            if key in kwargs:
+                task[key] = kwargs[key]
+        tasks.insert(0, task)
+        return {"TaskHandle": handle}
 
     def receive_message(self, **kwargs: Any) -> Dict[str, Any]:
         self._boom("ReceiveMessage")

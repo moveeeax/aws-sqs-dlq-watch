@@ -17,7 +17,16 @@ def test_table_run_reports_every_rule_and_exits_one(clients, capsys):
     code = invoke(clients)
     out = capsys.readouterr().out
     assert code == EXIT_FINDINGS
-    for rule in ("dlq_backlog", "dlq_stale_messages", "orphan_dlq", "source_no_redrive", "dangling_redrive"):
+    for rule in (
+        "dlq_backlog",
+        "dlq_stale_messages",
+        "orphan_dlq",
+        "source_no_redrive",
+        "dangling_redrive",
+        "redrive_low_max_receive",
+        "dlq_retention_shorter",
+        "redrive_allow_blocks",
+    ):
         assert rule in out
     assert "orders-dlq" in out and "418" in out
     assert "HIGH" in out
@@ -53,7 +62,7 @@ def test_clean_account_exits_zero(capsys):
         "account": "123456789012",
         "queues": [
             {"name": "orders", "messages": 4, "redrive": {"target": "orders-dlq"}},
-            {"name": "orders-dlq", "messages": 0},
+            {"name": "orders-dlq", "messages": 0, "retention_seconds": 1209600},
         ],
     }
     sqs = FakeSQS(clean)
@@ -97,3 +106,15 @@ def test_peek_age_source_matches_cloudwatch_on_the_fixture(spec, capsys):
     payload = json.loads(capsys.readouterr().out)
     ages = {q["name"]: q["oldest_message_age_seconds"] for q in payload["queues"]}
     assert 309000 <= ages["orders-dlq"] <= 309010
+
+
+def test_min_receive_count_flag_is_honoured(clients, capsys):
+    invoke(clients, "--min-receive-count", "1")
+    assert "redrive_low_max_receive" not in capsys.readouterr().out
+    invoke(clients, "--min-receive-count", "6", "--json")
+    flagged = {
+        f["queue"]
+        for f in json.loads(capsys.readouterr().out)["findings"]
+        if f["rule"] == "redrive_low_max_receive"
+    }
+    assert flagged == {"orders", "invoices", "receipts"}
